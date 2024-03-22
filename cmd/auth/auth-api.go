@@ -1,83 +1,17 @@
 package auth_api
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
-	"time"
 
 	"github.com/byusric/go-rest-api/controllers"
 	models_auth "github.com/byusric/go-rest-api/models/auth"
 	utils_db "github.com/byusric/go-rest-api/utils/db"
+	app_jwt "github.com/byusric/go-rest-api/utils/jwt"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v4"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
-
-func GetSecretKey() string {
-	secret := os.Getenv("SECRET")
-	if secret == "" {
-		secret = "secret"
-	}
-	return secret
-}
-
-func extractBearerToken(header string) (string, error) {
-	if header == "" {
-		return "", errors.New("no header value given")
-	}
-
-	jwtToken := strings.Split(header, "Bearer ")
-	if len(jwtToken) != 2 {
-		return "", errors.New("incorrectly formatted authorization header")
-	}
-
-	return jwtToken[1], nil
-}
-
-func parseToken(jwtToken string) (*jwt.Token, error) {
-	token, err := jwt.Parse(jwtToken, func(token *jwt.Token) (interface{}, error) {
-		if _, OK := token.Method.(*jwt.SigningMethodHMAC); !OK {
-			return nil, errors.New("bad signed method received")
-		}
-		return []byte(GetSecretKey()), nil
-	})
-
-	if err != nil {
-		return nil, errors.New("bad jwt token")
-	}
-
-	return token, nil
-}
-
-func JWTTokenCheck(c *gin.Context) {
-	jwtToken, err := extractBearerToken(c.GetHeader("Authorization"))
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, models_auth.UnsignedResponse{
-			Message: err.Error(),
-		})
-		return
-	}
-
-	token, err := parseToken(jwtToken)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, models_auth.UnsignedResponse{
-			Message: "bad jwt token",
-		})
-		return
-	}
-
-	_, OK := token.Claims.(jwt.MapClaims)
-	if !OK {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, models_auth.UnsignedResponse{
-			Message: "unable to parse claims",
-		})
-		return
-	}
-	c.Next()
-}
 
 func EncriptPassword(c *gin.Context, password string) string {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 5)
@@ -120,31 +54,33 @@ func Login(c *gin.Context) {
 	validation := VerifyPassword(c, input.Password, user.Password)
 
 	if validation == nil {
-		now := time.Now()
-		day := time.Date(now.Year(), now.Month(), now.Day()+1, now.Hour(), now.Minute(), now.Second(), 0, time.UTC)
+		token, err := app_jwt.GenerateJWT(user.ID)
 
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"user": user,
-			// let the token be valid for one year
-			"nbf": now.Unix(), //nbf: not before
-			"exp": day.Unix(), //exp: expire
-		})
+		fmt.Println(err)
 
-		fmt.Println(token)
-
-		tokenStr, err := token.SignedString([]byte(GetSecretKey()))
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, models_auth.UnsignedResponse{
-				Message: err.Error(),
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": err,
 			})
 			return
 		}
 
-		fmt.Println(tokenStr)
+		cleanUser := models_auth.UserResponse{
+			Name:     user.Name,
+			Username: user.Username,
+			Email:    user.Email,
+			Role:     user.Role,
+			Model: gorm.Model{
+				ID:        user.ID,
+				CreatedAt: user.CreatedAt,
+				UpdatedAt: user.UpdatedAt,
+				DeletedAt: user.DeletedAt,
+			},
+		}
 
-		c.JSON(http.StatusOK, models_auth.SignedResponse{
-			Token:   tokenStr,
-			Message: "logged in",
+		c.JSON(http.StatusOK, gin.H{
+			"jwt":  token,
+			"user": cleanUser,
 		})
 
 	}
@@ -158,11 +94,21 @@ func Register(c *gin.Context) {
 		return
 	}
 
+	var firstUser models_auth.UserResponse
+
+	controllers.DB.Table("users").First(&firstUser)
+
+	var role string
+
+	if firstUser.ID >= 1 {
+		role = "USER"
+	} else {
+		role = "ADMIN"
+	}
+
 	var hash = EncriptPassword(c, input.Password)
 
-	fmt.Println(hash, input.Password)
-
-	user := models_auth.User{Username: input.Username, Email: input.Email, Password: hash, Name: input.Name}
+	user := models_auth.User{Username: input.Username, Email: input.Email, Password: hash, Name: input.Name, Role: role}
 
 	controllers.DB.Table("users").Create(&user)
 
