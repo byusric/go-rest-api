@@ -13,7 +13,6 @@ import (
 	utils_db "github.com/byusric/go-rest-api/utils/db"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
-	"github.com/victoryeo/golang-restapi/models"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -83,8 +82,8 @@ func JWTTokenCheck(c *gin.Context) {
 func EncriptPassword(c *gin.Context, password string) string {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 5)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.UnsignedResponse{
-			Message: err,
+		c.JSON(http.StatusInternalServerError, models_auth.SignedResponse{
+			Message: err.Error(),
 		})
 	}
 
@@ -107,12 +106,12 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	var user models.User
+	var user models_auth.User
 
 	controllers.DB.Table("users").Where("username = ?", input.Username).First(&user)
 
 	if user.Name == "" {
-		c.JSON(http.StatusNotFound, models.UnsignedResponse{
+		c.JSON(http.StatusNotFound, models_auth.UnsignedResponse{
 			Message: "Invalid credentials",
 		})
 		return
@@ -168,13 +167,13 @@ func Register(c *gin.Context) {
 	controllers.DB.Table("users").Create(&user)
 
 	if user.ID == 0 {
-		c.JSON(http.StatusBadRequest, models.UnsignedResponse{
+		c.JSON(http.StatusBadRequest, models_auth.UnsignedResponse{
 			Message: "bad request",
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SignedResponse{
+	c.JSON(http.StatusOK, models_auth.SignedResponse{
 		Message: "successfully registred",
 	})
 }
